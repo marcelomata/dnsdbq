@@ -35,11 +35,12 @@
 .Op Fl r Ar rdata
 .Op Fl t Ar rrtype
 .Op Fl J Ar input_file
+.Op Fl a Ar additional-query-parameters
 .Sh DESCRIPTION
 .Nm dnsdbq
-constructs and issues queries to the Farsight DNSDB and displays responses. It
-is commonly used as a production command line interface to the DNSDB API
-server.
+constructs and issues queries to the Farsight DNSDB, the CIRCL PDNS or 
+the Deteque Passive DNS and displays responses. It is commonly used 
+as a production command line interface to the DNSDB API server.
 .Pp
 DNSDB is a database that stores and indexes both the passive DNS data
 available via Farsight Security's Security Information Exchange as well as the
@@ -78,6 +79,9 @@ or
 Specify a "time_first_after" timestamp. Only results first seen by the
 Farsight sensor network on or after this date will be emitted. See below for
 timestamp formats and examples.
+.It Fl a Ar additional-query-parameters
+Specify additional query parameters, enclosed in double quotes, used to enable 
+particular features for the specified pdns engine in use (see the -u option).
 .It Fl B Ar timestamp
 Specify a "time_first_before" timestamp. Only results first seen by the
 Farsight sensor network on or before this date will be emitted. See below for
@@ -200,7 +204,8 @@ defined in DNS RFCs, including ANY.  A special-case supported in DNSDB
 is ANY-DNSSEC, which matches on DS, RRSIG, NSEC, DNSKEY, NSEC3,
 NSEC3PARAM, and DLV resource record types.
 .It Fl u Ar server_sys
-specifies the syntax of the RESTful URL, default is "dnsdb".
+specifies the syntax of the RESTful URL, default is "dnsdb". Valid values 
+are shown when using the -h option and may include "circl" or "deteque".
 .El
 .Sh "TIMESTAMP FORMATS"
 Timestamps may be one of following forms.
@@ -303,12 +308,31 @@ $ head -1 batch-output.json | jq .
 or
 .Ic /etc/dnsdb-query.conf :
 configuration file which should contain the user's apikey and server URL.
-.Bl -tag -width ".Ev DNSDB_SERVER"
+.Bl -tag -width ".Ev DETEQUE_AUTHFILE"
 .It Ev APIKEY
 contains the user's apikey (no default).
 .It Ev DNSDB_SERVER
 contains the URL of the DNSDB API server (default is https://api.dnsdb.info),
 and optionally the URI prefix for the database (default is "/lookup").
+.It Ev CIRCL_AUTH
+contains the authentication token needed to access the pdns system
+.It Ev CIRCL_SERVER
+contains the URL of the CIRCL API server (default is 
+https://www.circl.lu/pdns/query)
+.It Ev DETEQUE_TOKEN
+contains a single authentication JWT token with a limited time validity. 
+Usually it's a better idea to use DETEQUE_AUTH properly
+.It Ev DETEQUE_AUTH
+contains the credentials to access the Deteque PDNS system (email and password, 
+separated by a colon)
+.It Ev DETEQUE_SERVER
+contains the URL of the Deteque API server (default is 
+https://api-pdns.deteque.com/v2)
+.It Ev DETEQUE_AUTHFILE
+this is the location of a file that dnsdbq will create and overwrite 
+when necessary, containing the latest JWT token obtained from the 
+authentication method. The token is refreshed automatically before expiration
+if DETEQUE_AUTH is properly set.
 .El
 .Sh ENVIRONMENT
 The following environment variables affect the execution of
