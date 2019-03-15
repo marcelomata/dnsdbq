@@ -26,7 +26,8 @@
 #define _DEFAULT_SOURCE
 
 /* optional features. */
-#define WANT_PDNS_CIRCL 1
+#define WANT_PDNS_CIRCL   1
+#define WANT_PDNS_DETEQUE 1
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -194,10 +195,6 @@ static char *dnsdb_url(const char *, char *);
 static void dnsdb_request_info(void);
 static void dnsdb_write_info(reader_t);
 static void dnsdb_auth(reader_t);
-#if WANT_PDNS_CIRCL
-static char *circl_url(const char *, char *);
-static void circl_auth(reader_t);
-#endif
 
 /* Constants. */
 
@@ -219,17 +216,6 @@ static const char env_time_fmt[] = "DNSDB_TIME_FORMAT";
 static const char id_swclient[] = "dnsdbq";
 static const char id_version[] = "1.1";
 
-static const struct pdns_sys pdns_systems[] = {
-	/* note: element [0] of this array is the default. */
-	{ "dnsdb", "https://api.dnsdb.info",
-		dnsdb_url, dnsdb_request_info, dnsdb_write_info, dnsdb_auth },
-#if WANT_PDNS_CIRCL
-	{ "circl", "https://www.circl.lu/pdns/query",
-		circl_url, NULL, NULL, circl_auth },
-#endif
-	{ NULL, NULL, NULL, NULL, NULL, NULL }
-};
-
 #define	MAX_KEYS 5
 #define	MAX_JOBS 8
 
@@ -241,13 +227,9 @@ static const struct pdns_sys pdns_systems[] = {
 /* Private. */
 
 static const char *program_name = NULL;
+static char *additional_qparams = NULL;
 static char *api_key = NULL;
 static char *dnsdb_server = NULL;
-#if WANT_PDNS_CIRCL
-static char *circl_server = NULL;
-static char *circl_authinfo = NULL;
-#endif
-static pdns_sys_t sys = pdns_systems;
 static bool batch = false;
 static bool merge = false;
 static bool complete = false;
@@ -268,6 +250,31 @@ static writer_t writers = NULL;
 static int exit_code = 0; /* hopeful */
 static size_t ideal_buffer;
 
+static pdns_sys_t sys;
+
+#if WANT_PDNS_CIRCL
+#include "dnsdbq_sys_circl.c"
+#endif
+
+#if WANT_PDNS_DETEQUE
+#include "dnsdbq_sys_deteque.c"
+#endif
+
+static const struct pdns_sys pdns_systems[] = {
+	/* note: element [0] of this array is the default. */
+	{ "dnsdb", "https://api.dnsdb.info",
+		dnsdb_url, dnsdb_request_info, dnsdb_write_info, dnsdb_auth },
+#if WANT_PDNS_CIRCL
+	{ "circl", "https://www.circl.lu/pdns/query",
+		circl_url, NULL, NULL, circl_auth },
+#endif
+#if WANT_PDNS_DETEQUE
+	{ "deteque", "https://api-pdns.deteque.com/v2",
+		deteque_url, deteque_request_info, deteque_write_info, deteque_auth },
+#endif
+	{ NULL, NULL, NULL, NULL, NULL, NULL }
+};
+
 /* Public. */
 
 int
@@ -278,6 +285,8 @@ main(int argc, char *argv[]) {
 	u_long before = 0;
 	int json_fd = -1;
 	int ch;
+
+	sys = pdns_systems;
 
 	/* global dynamic initialization. */
 	ideal_buffer = 4 * (size_t) sysconf(_SC_PAGESIZE);
@@ -290,9 +299,12 @@ main(int argc, char *argv[]) {
 
 	/* process the command line options. */
 	while ((ch = getopt(argc, argv,
-			    "A:B:r:n:i:l:L:u:p:t:b:k:J:R:djfmsShcI")) != -1)
+			    "a:A:B:r:n:i:l:L:u:p:t:b:k:J:R:djfmsShcI")) != -1)
 	{
 		switch (ch) {
+		case 'a':
+			additional_qparams = strdup(optarg);
+			break;
 		case 'A':
 			if (!time_get(optarg, &after)) {
 				fprintf(stderr, "bad -A timestamp: '%s'\n",
@@ -668,7 +680,8 @@ help(void) {
 "use -h to reliably display this helpful text.\n"
 "use -c to get complete (vs. partial) time matching for -A and -B\n"
 "use -d one or more times to ramp up the diagnostic output\n"
-"use -I to see a system-specific account or key summary in JSON format\n",
+"use -I to see a system-specific account or key summary in JSON format\n"
+"use -a to add additional query params to the ReST request\n",
 		program_name);
 	fprintf(stderr, "\nsystem must be one of:");
 	for (t = pdns_systems; t->name != NULL; t++)
@@ -715,6 +728,12 @@ my_exit(int code, ...) {
 #if WANT_PDNS_CIRCL
 	DESTROY(circl_server);
 	DESTROY(circl_authinfo);
+#endif
+#if WANT_PDNS_DETEQUE
+	DESTROY(deteque_token);
+	DESTROY(deteque_server);
+	DESTROY(deteque_authinfo);
+	DESTROY(deteque_authfile);
 #endif
 
 	/* terminate process. */
@@ -813,6 +832,12 @@ read_configs(void) {
 			     "echo circla $CIRCL_AUTH;"
 			     "echo circls $CIRCL_SERVER;"
 #endif
+#if WANT_PDNS_DETEQUE
+			     "echo deteque_t $DETEQUE_TOKEN;"
+			     "echo deteque_a $DETEQUE_AUTH;"
+			     "echo deteque_s $DETEQUE_SERVER;"
+			     "echo deteque_f $DETEQUE_AUTHFILE;"
+#endif
 			     "exit", cf);
 		if (x < 0)
 			my_panic("asprintf");
@@ -854,6 +879,16 @@ read_configs(void) {
 				pp = &circl_authinfo;
 			} else if (strcmp(tok1, "circls") == 0) {
 				pp = &circl_server;
+#endif
+#if WANT_PDNS_DETEQUE
+			} else if (strcmp(tok1, "deteque_t") == 0) {
+				pp = &deteque_token;
+			} else if (strcmp(tok1, "deteque_a") == 0) {
+				pp = &deteque_authinfo;
+			} else if (strcmp(tok1, "deteque_s") == 0) {
+				pp = &deteque_server;
+			} else if (strcmp(tok1, "deteque_f") == 0) {
+				pp = &deteque_authfile;
 #endif
 			} else
 				abort();
@@ -1178,6 +1213,20 @@ launch(const char *command, writer_t writer,
 		tmp = NULL;
 		sep = '&';
 	}
+
+	if ( additional_qparams != NULL ) {
+		x = asprintf(&tmp, "%s%c%s",
+			     url, sep, additional_qparams);
+		if (x < 0) {
+			perror("asprintf");
+			my_exit(1, url, NULL);
+		}
+		free(url);
+		url = tmp;
+		tmp = NULL;
+		sep = '&';
+	}
+
 	if (debuglev > 0)
 		fprintf(stderr, "url [%s]\n", url);
 
@@ -2589,64 +2638,3 @@ dnsdb_auth(reader_t reader) {
 		DESTROY(key_header);
 	}
 }
-
-#if WANT_PDNS_CIRCL
-/* circl_url -- create a URL corresponding to a command-path string.
- *
- * the batch file and command line syntax are in native DNSDB API format.
- * this function has the opportunity to crack this into pieces, and re-form
- * those pieces into the URL format needed by some other DNSDB-like system
- * which might have the same JSON output format but a different REST syntax.
- *
- * CIRCL pDNS only "understands IP addresses, hostnames or domain names
- * (please note that CIDR block queries are not supported)". exit with an
- * error message if asked to do something the CIRCL server does not handle.
- * 
- * 1. RRSet query: rrset/name/NAME[/TYPE[/BAILIWICK]]
- * 2. Rdata (name) query: rdata/name/NAME[/TYPE]
- * 3. Rdata (IP address) query: rdata/ip/ADDR[/PFXLEN]
- */
-static char *
-circl_url(const char *path, char *sep) {
-	const char *val = NULL;
-	char *ret;
-	int x;
-
-	if (circl_server == NULL)
-		circl_server = strdup(sys->server);
-	if (strncasecmp(path, "rrset/name/", 11) == 0) {
-		val = path + 11;
-	} else if (strncasecmp(path, "rdata/name/", 11) == 0) {
-		val = path + 11;
-	} else if (strncasecmp(path, "rdata/ip/", 9) == 0) {
-		val = path + 9;
-	} else
-		abort();
-	if (strchr(val, '/') != NULL) {
-		fprintf(stderr, "qualifiers not supported by CIRCL pDNS: %s\n",
-			val);
-		my_exit(1, NULL);
-	}
-	x = asprintf(&ret, "%s/%s", circl_server, val);
-	if (x < 0)
-		my_panic("asprintf");
-
-	/* because we will NOT append query parameters,
-	 * tell the caller to use ? for its query parameters.
-	 */
-	if (sep != NULL)
-		*sep = '?';
-
-	return (ret);
-}
-
-static void
-circl_auth(reader_t reader) {
-	if (reader->easy != NULL) {
-		curl_easy_setopt(reader->easy, CURLOPT_USERPWD,
-				 circl_authinfo);
-		curl_easy_setopt(reader->easy, CURLOPT_HTTPAUTH,
-				 CURLAUTH_BASIC);
-	}
-}
-#endif /*WANT_PDNS_CIRCL*/
