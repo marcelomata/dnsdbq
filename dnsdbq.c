@@ -924,10 +924,12 @@ read_environ() {
 			fprintf(stderr, "conf env dnsdb_server = '%s'\n",
 				dnsdb_server);
 	}
+	/*
 	if (api_key == NULL) {
 		fprintf(stderr, "no API key given\n");
 		my_exit(1, NULL);
 	}
+	*/
 }
 
 /* do_batch -- implement "filter" mode, reading commands from a batch file.
