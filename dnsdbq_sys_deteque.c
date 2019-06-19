@@ -353,7 +353,7 @@ static char *request_token(void) {
 }
 
 static char *load_token(void) {
-	char *expire;
+	char *expire = NULL;
 	long lexp = 0;
 
 	if ( deteque_authfile == NULL ) {
@@ -376,7 +376,7 @@ static char *load_token(void) {
 		fseek (f, 0, SEEK_SET);
 
 		deteque_token = malloc((size_t)length);
-		if (deteque_token) {
+		if (deteque_token != NULL) {
 			char *c;
 
 			fread(deteque_token, 1, (size_t) length, f);
